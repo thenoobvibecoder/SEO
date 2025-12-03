@@ -18,15 +18,15 @@
 </head>
 <body>
     <h1>SEO Analyzer</h1>
-    <p>Enter your content details to analyze SEO score, get improvement suggestions, an optimized slug, meta description, and more.</p>
+    <p>Enter your content details to analyze SEO score, get improvement suggestions, an optimized slug, meta description, and more. Supports HTML content with tags, styling (e.g., &lt;strong&gt;, &lt;em&gt;), embedded images (&lt;img&gt;), and auto-detects primary keyword if not provided.</p>
     <form id="seoForm">
         <label for="title">Page Title:</label>
         <input type="text" id="title" required placeholder="e.g., My Awesome Blog Post">
 
-        <label for="primaryKeyword">Primary Keyword:</label>
-        <input type="text" id="primaryKeyword" required placeholder="e.g., seo tips">
+        <label for="primaryKeyword">Primary Keyword (optional - will auto-detect if blank):</label>
+        <input type="text" id="primaryKeyword" placeholder="e.g., seo tips">
 
-        <label for="content">Content (paste your article text here):</label>
+        <label for="content">Content (paste your HTML or plain text article here):</label>
         <textarea id="content" required></textarea>
 
         <button type="submit">Analyze SEO</button>
@@ -37,6 +37,11 @@
     
     <div id="results">
         <h2>Analysis Results</h2>
+        
+        <div class="section">
+            <h3>Detected Primary Keyword</h3>
+            <p id="detectedKeyword"></p>
+        </div>
         
         <div class="section">
             <h3>SEO Score</h3>
@@ -69,6 +74,7 @@
         const loading = document.getElementById('loading');
         const error = document.getElementById('error');
         const results = document.getElementById('results');
+        const detectedKeywordEl = document.getElementById('detectedKeyword');
         const seoScoreEl = document.getElementById('seoScore');
         const improvementsEl = document.getElementById('improvements');
         const slugEl = document.getElementById('slug');
@@ -84,11 +90,11 @@
             otherRecsEl.innerHTML = '';
 
             const title = document.getElementById('title').value.trim();
-            const primaryKeyword = document.getElementById('primaryKeyword').value.trim().toLowerCase();
+            let primaryKeyword = document.getElementById('primaryKeyword').value.trim().toLowerCase();
             const content = document.getElementById('content').value.trim();
 
-            if (!title || !primaryKeyword || !content) {
-                error.textContent = 'All fields are required.';
+            if (!title || !content) {
+                error.textContent = 'Title and content are required.';
                 loading.style.display = 'none';
                 return;
             }
@@ -96,31 +102,56 @@
             // Simulate async analysis (for UX)
             setTimeout(() => {
                 try {
-                    // Basic SEO Analysis Functions
-                    const words = content.split(/\s+/).filter(word => word.length > 0);
+                    // Parse content as HTML
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(content, 'text/html');
+                    const body = doc.body;
+
+                    // Extract clean text (strip tags but preserve for analysis)
+                    const fullText = body.textContent.trim();
+                    const words = fullText.split(/\s+/).filter(word => word.length > 0);
                     const wordCount = words.length;
 
-                    // Keyword Density
-                    const keywordCount = words.filter(word => word.toLowerCase() === primaryKeyword.split(' ')[0]).length; // Simple, assumes single word or first word
+                    // Auto-detect primary keyword if not provided
+                    if (!primaryKeyword) {
+                        const topKeywords = getTopKeywords(words);
+                        primaryKeyword = topKeywords[0] || ''; // Take the most frequent
+                    }
+
+                    // Keyword Density (consider emphasized text as bonus)
+                    let keywordCount = words.filter(word => word.toLowerCase().includes(primaryKeyword.split(' ')[0])).length;
+                    const emphasizedKeywords = body.querySelectorAll('strong, em, b, i');
+                    emphasizedKeywords.forEach(el => {
+                        if (el.textContent.toLowerCase().includes(primaryKeyword)) keywordCount += 0.5; // Bonus for emphasis
+                    });
                     const density = (keywordCount / wordCount) * 100;
 
-                    // Headings (assume content has HTML-like tags or detect # for markdown)
-                    const h1Count = (content.match(/<h1>|#/gi) || []).length;
-                    const h2Count = (content.match(/<h2>|##/gi) || []).length;
+                    // Headings
+                    const h1Count = body.querySelectorAll('h1').length;
+                    const h2Count = body.querySelectorAll('h2').length;
 
                     // Readability (Flesch-Kincaid approx)
-                    const sentences = content.split(/[.!?]+/).length;
+                    const sentences = fullText.split(/[.!?]+/).length || 1;
                     const syllables = words.reduce((acc, word) => acc + (word.match(/[aeiouy]{1,2}/gi) || []).length, 0);
                     const flesch = 206.835 - 1.015 * (wordCount / sentences) - 84.6 * (syllables / wordCount);
+
+                    // Images
+                    const images = body.querySelectorAll('img');
+                    const imageCount = images.length;
+                    let altWithKeyword = 0;
+                    images.forEach(img => {
+                        if (img.alt && img.alt.toLowerCase().includes(primaryKeyword)) altWithKeyword++;
+                    });
 
                     // Score Calculation (0-100)
                     let score = 0;
                     if (wordCount > 300) score += 20;
                     if (density > 1 && density < 3) score += 20;
-                    if (h1Count >= 1) score += 15;
-                    if (h2Count >= 2) score += 15;
-                    if (flesch > 60) score += 15; // Easy to read
-                    if (content.includes('alt="')) score += 15; // Assume image alts
+                    if (h1Count >= 1) score += 10;
+                    if (h2Count >= 2) score += 10;
+                    if (flesch > 60) score += 15;
+                    if (imageCount > 0) score += 10;
+                    if (altWithKeyword > 0) score += 15;
 
                     // Improvements
                     const improvements = [];
@@ -130,13 +161,14 @@
                     if (h1Count < 1) improvements.push('Add at least one H1 heading containing the primary keyword.');
                     if (h2Count < 2) improvements.push('Add more H2 subheadings for better structure.');
                     if (flesch < 60) improvements.push('Improve readability by using shorter sentences and simpler words.');
-                    if (!content.includes('alt="')) improvements.push('Add images with descriptive alt texts including keywords.');
+                    if (imageCount === 0) improvements.push('Add images to make the content more engaging.');
+                    if (altWithKeyword === 0 && imageCount > 0) improvements.push('Include the primary keyword in image alt texts for better SEO.');
 
                     // Slug
                     const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
-                    // Meta Description (first 150 chars + ellipsis)
-                    const metaDesc = content.substring(0, 160).trim() + (content.length > 160 ? '...' : '');
+                    // Meta Description (first 160 chars of clean text)
+                    const metaDesc = fullText.substring(0, 160).trim() + (fullText.length > 160 ? '...' : '');
 
                     // Other Recs
                     const otherRecs = [
@@ -144,10 +176,13 @@
                         'Include internal/external links for better authority.',
                         'Ensure mobile-friendliness (use responsive design).',
                         'Optimize images for speed if applicable.',
-                        `Top Keywords: ${getTopKeywords(words).join(', ')}` // Simple freq
+                        `Top Keywords: ${getTopKeywords(words).join(', ')}`,
+                        `Detected Images: ${imageCount} (with ${altWithKeyword} having keyword in alt text)`,
+                        `Emphasized Keywords: Found ${emphasizedKeywords.length} styled elements, boosting density calculation.`
                     ];
 
                     // Display
+                    detectedKeywordEl.textContent = primaryKeyword || 'None detected';
                     seoScoreEl.textContent = `${score}/100`;
                     improvements.forEach(rec => {
                         const li = document.createElement('li');
